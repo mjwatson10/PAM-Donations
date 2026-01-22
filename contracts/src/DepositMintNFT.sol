@@ -48,11 +48,24 @@ contract DepositMintNFT is ERC721A, Ownable {
     // =====================
     // Constructor
     // =====================
-    constructor(string memory name_, string memory symbol_, string memory baseTokenURI_, address initialOwner)
-        ERC721A(name_, symbol_)
-        Ownable(initialOwner)
-    {
+    constructor(
+        string memory name_,
+        string memory symbol_,
+        string memory baseTokenURI_,
+        address initialOwner,
+        address[] memory initialStablecoins,
+        bool[] memory initialAllowed,
+        uint8[] memory initialDecimals
+    ) ERC721A(name_, symbol_) Ownable(initialOwner) {
         _baseTokenURI = baseTokenURI_;
+
+        require(
+            initialStablecoins.length == initialAllowed.length && initialStablecoins.length == initialDecimals.length,
+            "initial stablecoin arrays mismatch"
+        );
+        for (uint256 i = 0; i < initialStablecoins.length; i++) {
+            _setStablecoin(initialStablecoins[i], initialAllowed[i], initialDecimals[i]);
+        }
     }
 
     /// @dev Override start token ID so that token IDs begin at 1 instead of 0.
@@ -69,6 +82,10 @@ contract DepositMintNFT is ERC721A, Ownable {
     /// @param allowed Whether the token is allowed for mint payments
     /// @param decimals_ The token's decimals (e.g., 6 for USDC/USDT, 18 for USDe)
     function setStablecoin(address token, bool allowed, uint8 decimals_) external onlyOwner {
+        _setStablecoin(token, allowed, decimals_);
+    }
+
+    function _setStablecoin(address token, bool allowed, uint8 decimals_) internal {
         require(token != address(0), "token=0");
         // sanity check: common decimals are in [6, 18]
         require(decimals_ >= 6 && decimals_ <= 24, "decimals out of range");

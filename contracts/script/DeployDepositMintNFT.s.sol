@@ -24,18 +24,37 @@ contract DeployDepositMintNFT is Script {
 
         vm.startBroadcast(pk);
 
-        DepositMintNFT nft = new DepositMintNFT(NAME, SYMBOL, BASE_URI, owner);
+        uint256 count = 0;
+        if (USDC != address(0)) count++;
+        if (USDT != address(0)) count++;
+        if (USDE != address(0)) count++;
 
-        // Configure allowed stablecoins if provided
+        address[] memory initialStablecoins = new address[](count);
+        bool[] memory initialAllowed = new bool[](count);
+        uint8[] memory initialDecimals = new uint8[](count);
+
+        uint256 i = 0;
         if (USDC != address(0)) {
-            nft.setStablecoin(USDC, true, 6);
+            initialStablecoins[i] = USDC;
+            initialAllowed[i] = true;
+            initialDecimals[i] = 6;
+            i++;
         }
         if (USDT != address(0)) {
-            nft.setStablecoin(USDT, true, 6);
+            initialStablecoins[i] = USDT;
+            initialAllowed[i] = true;
+            initialDecimals[i] = 6;
+            i++;
         }
         if (USDE != address(0)) {
-            nft.setStablecoin(USDE, true, 18);
+            initialStablecoins[i] = USDE;
+            initialAllowed[i] = true;
+            initialDecimals[i] = 18;
+            i++;
         }
+
+        DepositMintNFT nft =
+            new DepositMintNFT(NAME, SYMBOL, BASE_URI, owner, initialStablecoins, initialAllowed, initialDecimals);
 
         vm.stopBroadcast();
     }

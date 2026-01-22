@@ -37,14 +37,19 @@ contract DepositMintNFTTest is Test {
 
         // Deploy NFT contract
         vm.prank(owner);
-        nft = new DepositMintNFT("Test NFT", "TNFT", "", owner);
-
-        // Whitelist stablecoins
-        vm.startPrank(owner);
-        nft.setStablecoin(address(usdc), true, USDC_DECIMALS);
-        nft.setStablecoin(address(usdt), true, USDT_DECIMALS);
-        nft.setStablecoin(address(usde), true, USDE_DECIMALS);
-        vm.stopPrank();
+        address[] memory initialStablecoins = new address[](3);
+        bool[] memory initialAllowed = new bool[](3);
+        uint8[] memory initialDecimals = new uint8[](3);
+        initialStablecoins[0] = address(usdc);
+        initialStablecoins[1] = address(usdt);
+        initialStablecoins[2] = address(usde);
+        initialAllowed[0] = true;
+        initialAllowed[1] = true;
+        initialAllowed[2] = true;
+        initialDecimals[0] = USDC_DECIMALS;
+        initialDecimals[1] = USDT_DECIMALS;
+        initialDecimals[2] = USDE_DECIMALS;
+        nft = new DepositMintNFT("Test NFT", "TNFT", "", owner, initialStablecoins, initialAllowed, initialDecimals);
 
         // Mint tokens to users
         usdc.mint(user1, 1000 * 10 ** USDC_DECIMALS); // 1000 USDC
@@ -243,6 +248,11 @@ contract DepositMintNFTTest is Test {
     // =====================
     // Token ID Tests
     // =====================
+
+    function test_TokenIdZeroDoesNotExist() public {
+        vm.expectRevert();
+        nft.ownerOf(0);
+    }
 
     function test_TokenIdsAreSequential() public {
         uint256 amount = 15 * 10 ** USDC_DECIMALS; // $15 = 3 NFTs
