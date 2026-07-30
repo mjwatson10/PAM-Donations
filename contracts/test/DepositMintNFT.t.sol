@@ -4,10 +4,12 @@ pragma solidity ^0.8.20;
 import {Test, console2} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {DepositMintNFT} from "src/DepositMintNFT.sol";
+import {DepositMintNFTFactory} from "src/DepositMintNFTFactory.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 
 contract DepositMintNFTTest is Test {
     DepositMintNFT public nft;
+    DepositMintNFTFactory public factory;
     ERC20Mock public usdc;
     ERC20Mock public usdt;
     ERC20Mock public usde;
@@ -16,6 +18,7 @@ contract DepositMintNFTTest is Test {
     address public owner = address(1);
     address public user1 = address(2);
     address public user2 = address(3);
+    address public treasury = address(4);
 
     uint8 constant USDC_DECIMALS = 6;
     uint8 constant USDT_DECIMALS = 6;
@@ -35,8 +38,11 @@ contract DepositMintNFTTest is Test {
         usde = new ERC20Mock();
         unauthorizedToken = new ERC20Mock();
 
-        // Deploy NFT contract
-        vm.prank(owner);
+        // Deploy implementation + factory (factory deploys a beacon owned by `owner`).
+        vm.startPrank(owner);
+        DepositMintNFT implementation = new DepositMintNFT();
+        factory = new DepositMintNFTFactory(address(implementation), owner);
+
         address[] memory initialStablecoins = new address[](3);
         bool[] memory initialAllowed = new bool[](3);
         uint8[] memory initialDecimals = new uint8[](3);
@@ -49,13 +55,34 @@ contract DepositMintNFTTest is Test {
         initialDecimals[0] = USDC_DECIMALS;
         initialDecimals[1] = USDT_DECIMALS;
         initialDecimals[2] = USDE_DECIMALS;
-        nft = new DepositMintNFT("Test NFT", "TNFT", "", owner, initialStablecoins, initialAllowed, initialDecimals);
+        address campaign = factory.createCampaign(
+            "Test NFT", "TNFT", "", owner, treasury, initialStablecoins, initialAllowed, initialDecimals
+        );
+        nft = DepositMintNFT(campaign);
+        vm.stopPrank();
 
         // Mint tokens to users
         usdc.mint(user1, 1000 * 10 ** USDC_DECIMALS); // 1000 USDC
         usdt.mint(user1, 1000 * 10 ** USDT_DECIMALS); // 1000 USDT
         usde.mint(user1, 1000 * 10 ** USDE_DECIMALS); // 1000 USDe
         unauthorizedToken.mint(user1, 1000 * 10 ** 18);
+
+        assertEq(nft.treasury(), treasury);
+    }
+
+    function test_CannotInitializeWithZeroTreasury() public {
+        address[] memory initialStablecoins = new address[](1);
+        bool[] memory initialAllowed = new bool[](1);
+        uint8[] memory initialDecimals = new uint8[](1);
+
+        initialStablecoins[0] = address(usdc);
+        initialAllowed[0] = true;
+        initialDecimals[0] = USDC_DECIMALS;
+
+        vm.expectRevert(bytes("treasury=0"));
+        factory.createCampaign(
+            "Test NFT", "TNFT", "", owner, address(0), initialStablecoins, initialAllowed, initialDecimals
+        );
     }
 
     // =====================
@@ -91,6 +118,10 @@ contract DepositMintNFTTest is Test {
     function test_CanMintWithWhitelistedStablecoin() public {
         uint256 amount = 5 * 10 ** USDC_DECIMALS; // $5 USDC
 
+        uint256 treasuryBalBefore = usdc.balanceOf(treasury);
+        uint256 contractBalBefore = usdc.balanceOf(address(nft));
+        uint256 userBalBefore = usdc.balanceOf(user1);
+
         vm.startPrank(user1);
         usdc.approve(address(nft), amount);
         uint256[] memory tokenIds = nft.mintWithStablecoin(address(usdc), amount, user1, "");
@@ -98,6 +129,9 @@ contract DepositMintNFTTest is Test {
 
         assertEq(tokenIds.length, 1);
         assertEq(nft.ownerOf(tokenIds[0]), user1);
+        assertEq(usdc.balanceOf(treasury), treasuryBalBefore + amount);
+        assertEq(usdc.balanceOf(address(nft)), contractBalBefore);
+        assertEq(usdc.balanceOf(user1), userBalBefore - amount);
     }
 
     function test_OwnerCanRemoveStablecoinFromWhitelist() public {
@@ -320,8 +354,9 @@ contract DepositMintNFTTest is Test {
     // Payment Tests
     // =====================
 
-    function test_StablecoinsAreTransferredToContract() public {
+    function test_StablecoinsAreTransferredToTreasury() public {
         uint256 amount = 10 * 10 ** USDC_DECIMALS; // $10 USDC
+        uint256 treasuryBalanceBefore = usdc.balanceOf(treasury);
         uint256 contractBalanceBefore = usdc.balanceOf(address(nft));
         uint256 userBalanceBefore = usdc.balanceOf(user1);
 
@@ -330,7 +365,8 @@ contract DepositMintNFTTest is Test {
         nft.mintWithStablecoin(address(usdc), amount, user1, "");
         vm.stopPrank();
 
-        assertEq(usdc.balanceOf(address(nft)), contractBalanceBefore + amount);
+        assertEq(usdc.balanceOf(treasury), treasuryBalanceBefore + amount);
+        assertEq(usdc.balanceOf(address(nft)), contractBalanceBefore);
         assertEq(usdc.balanceOf(user1), userBalanceBefore - amount);
     }
 
@@ -380,14 +416,10 @@ contract DepositMintNFTTest is Test {
     // =====================
 
     function test_OwnerCanWithdrawStablecoins() public {
-        // User mints NFTs
         uint256 amount = 10 * 10 ** USDC_DECIMALS;
-        vm.startPrank(user1);
-        usdc.approve(address(nft), amount);
-        nft.mintWithStablecoin(address(usdc), amount, user1, "");
-        vm.stopPrank();
 
-        // Owner withdraws
+        usdc.mint(address(nft), amount);
+
         uint256 contractBalance = usdc.balanceOf(address(nft));
         vm.prank(owner);
         nft.withdraw(address(usdc), owner, contractBalance);
@@ -619,7 +651,7 @@ contract DepositMintNFTTest is Test {
         }
     }
 
-    function testFuzz_ContractAccumulatesPayments(uint256[] memory amounts) public {
+    function testFuzz_TreasuryAccumulatesPayments(uint256[] memory amounts) public {
         // Limit array size
         vm.assume(amounts.length > 0 && amounts.length <= 10);
 
@@ -641,7 +673,8 @@ contract DepositMintNFTTest is Test {
         }
         vm.stopPrank();
 
-        // Verify contract received all payments
-        assertEq(usdc.balanceOf(address(nft)), totalExpected);
+        // Verify treasury received all payments
+        assertEq(usdc.balanceOf(treasury), totalExpected);
+        assertEq(usdc.balanceOf(address(nft)), 0);
     }
 }

@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {ERC721Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {ERC721A} from "ERC721A/contracts/ERC721A.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title DepositMintNFT
 /// @notice ERC-721A NFT that mints only after a user deposits >= $5 of an allowed stablecoin.
 ///         Stablecoins are assumed to track $1 per unit; the threshold is enforced using token decimals.
-/// @dev Uses ERC721A for gas-efficient batch minting and OpenZeppelin Ownable for admin management.
-contract DepositMintNFT is ERC721A, Ownable {
+/// @dev Upgradeable ERC-721 that mints only after a user deposits >= $5 of an allowed stablecoin.
+contract DepositMintNFT is Initializable, ERC721Upgradeable, OwnableUpgradeable {
     using SafeERC20 for IERC20;
+
+    constructor() {
+        _disableInitializers();
+    }
 
     // =====================
     // Stablecoin management
@@ -30,14 +35,20 @@ contract DepositMintNFT is ERC721A, Ownable {
     // Token state
     // =====================
 
+    address public treasury;
+
     // Base URI (optional). If empty, tokenURI will be empty.
     string private _baseTokenURI;
+
+    // Next token id to mint. Starts at 1.
+    uint256 private _nextTokenId;
 
     // =====================
     // Events
     // =====================
     event StablecoinUpdated(address indexed token, bool allowed, uint8 decimals);
     event Withdrawn(address indexed token, address indexed to, uint256 amount);
+    event TreasuryUpdated(address indexed treasury);
     event Minted(
         address indexed payer, address indexed to, uint256 indexed tokenId, address stablecoin, uint256 amount
     );
@@ -46,18 +57,27 @@ contract DepositMintNFT is ERC721A, Ownable {
     );
 
     // =====================
-    // Constructor
+    // Initialization
     // =====================
-    constructor(
+    function initialize(
         string memory name_,
         string memory symbol_,
         string memory baseTokenURI_,
         address initialOwner,
+        address treasury_,
         address[] memory initialStablecoins,
         bool[] memory initialAllowed,
         uint8[] memory initialDecimals
-    ) ERC721A(name_, symbol_) Ownable(initialOwner) {
+    ) external initializer {
+        __ERC721_init(name_, symbol_);
+        __Ownable_init(initialOwner);
+
+        require(treasury_ != address(0), "treasury=0");
+        treasury = treasury_;
+        emit TreasuryUpdated(treasury_);
+
         _baseTokenURI = baseTokenURI_;
+        _nextTokenId = 1;
 
         require(
             initialStablecoins.length == initialAllowed.length && initialStablecoins.length == initialDecimals.length,
@@ -66,11 +86,6 @@ contract DepositMintNFT is ERC721A, Ownable {
         for (uint256 i = 0; i < initialStablecoins.length; i++) {
             _setStablecoin(initialStablecoins[i], initialAllowed[i], initialDecimals[i]);
         }
-    }
-
-    /// @dev Override start token ID so that token IDs begin at 1 instead of 0.
-    function _startTokenId() internal view virtual override returns (uint256) {
-        return 1;
     }
 
     // =====================
@@ -122,6 +137,7 @@ contract DepositMintNFT is ERC721A, Ownable {
         StablecoinInfo memory info = stablecoins[stablecoin];
         require(info.allowed, "stablecoin not allowed");
         require(to != address(0), "to=0");
+        require(treasury != address(0), "treasury not set");
 
         // Calculate price per NFT: $5 * 10^decimals
         uint256 pricePerNFT = MIN_USD * (10 ** uint256(info.decimals));
@@ -134,15 +150,15 @@ contract DepositMintNFT is ERC721A, Ownable {
         uint256 numToMint = amount / pricePerNFT;
 
         // Pull funds once
-        IERC20(stablecoin).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20(stablecoin).safeTransferFrom(msg.sender, treasury, amount);
 
-        // Mint NFTs in a single ERC721A batch and construct tokenIds in memory.
-        uint256 startTokenId = _nextTokenId();
-        _mint(to, numToMint);
-
+        // Mint NFTs and construct tokenIds in memory.
         tokenIds = new uint256[](numToMint);
         for (uint256 i = 0; i < numToMint; i++) {
-            tokenIds[i] = startTokenId + i;
+            uint256 tokenId = _nextTokenId;
+            _nextTokenId = tokenId + 1;
+            _safeMint(to, tokenId);
+            tokenIds[i] = tokenId;
         }
 
         // tokenUri parameter is kept for API compatibility but no longer used;
