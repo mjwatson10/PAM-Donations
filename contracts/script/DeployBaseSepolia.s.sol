@@ -10,17 +10,29 @@ contract DeployBaseSepolia is Script {
 
     string constant NAME = "Deposit Mint NFT";
     string constant SYMBOL = "DMNFT";
-    string constant BASE_URI = "";
 
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
-        address owner = vm.addr(pk);
+
+        address owner;
+        try vm.envAddress("OWNER") returns (address o) {
+            owner = o;
+        } catch {
+            owner = vm.addr(pk);
+        }
 
         address treasury;
         try vm.envAddress("TREASURY") returns (address t) {
             treasury = t;
         } catch {
             treasury = owner;
+        }
+
+        string memory baseUri;
+        try vm.envString("BASE_URI") returns (string memory b) {
+            baseUri = b;
+        } catch {
+            baseUri = "";
         }
 
         vm.startBroadcast(pk);
@@ -36,7 +48,9 @@ contract DeployBaseSepolia is Script {
         initialAllowed[0] = true;
         initialDecimals[0] = 6;
 
-        factory.createCampaign(NAME, SYMBOL, BASE_URI, owner, treasury, initialStablecoins, initialAllowed, initialDecimals);
+        factory.createCampaign(
+            NAME, SYMBOL, baseUri, owner, treasury, initialStablecoins, initialAllowed, initialDecimals
+        );
 
         vm.stopBroadcast();
     }
